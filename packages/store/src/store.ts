@@ -104,6 +104,11 @@ export type StateCreator<T> = (
 
 export type Selector<T, U> = (state: T) => U;
 
+/** Equality function used to determine whether a selected slice has changed.
+ *  Return `true` when the two values are considered equal (no re-render).
+ *  Return `false` when they differ (triggers re-render). */
+export type EqualityFn<U> = (a: U, b: U) => boolean;
+
 export type Listener<T> = (state: T, prevState: T) => void;
 
 export type Middleware<T> = (
@@ -396,19 +401,41 @@ export function createStore<T extends object>(
 
     // Create the hook function
     function useStore(): T;
-    function useStore<U>(selector: Selector<T, U>): U;
-    function useStore<U>(selector?: Selector<T, U>): T | U {
+    function useStore<U>(selector: Selector<T, U>, equalityFn?: EqualityFn<U>): U;
+    function useStore<U>(selector?: Selector<T, U>, equalityFn?: EqualityFn<U>): T | U {
         const select = selector ?? ((s: T) => s as unknown as U);
 
         // Use useState to trigger re-renders
         const [selectedState, setSelectedState] = useState(() => select(store.getState()));
+
+        // Keep the latest selector in a ref so the subscription closure never
+        // captures a stale selector from a previous render.
         const selectorRef = useRef(select);
         selectorRef.current = select;
+
+        // Mirror the selectorRef pattern for equalityFn: updating the ref on
+        // every render ensures changed equalityFn values do not create stale
+        // closures inside the subscription, without requiring re-subscription.
+        const equalityFnRef = useRef(equalityFn);
+        equalityFnRef.current = equalityFn;
+
+        // Track the previously selected value so we can compare inside the
+        // subscription callback. Initialise to the same value used by useState.
+        const prevSelectedRef = useRef(select(store.getState()));
 
         useEffect(() => {
             const unsubscribe = store.subscribe((newState) => {
                 const newSelected = selectorRef.current(newState);
-                setSelectedState(newSelected);
+                const eq = equalityFnRef.current;
+                // When an equalityFn is provided, use it; otherwise fall back
+                // to Object.is (preserving the original behaviour exactly).
+                const isEqual = eq
+                    ? eq(prevSelectedRef.current as U, newSelected)
+                    : Object.is(prevSelectedRef.current, newSelected);
+                if (!isEqual) {
+                    prevSelectedRef.current = newSelected;
+                    setSelectedState(newSelected);
+                }
             });
             return unsubscribe;
         }, []);
@@ -432,7 +459,7 @@ export function createStore<T extends object>(
 
 export interface UseStore<T> {
     (): T;
-    <U>(selector: Selector<T, U>): U;
+    <U>(selector: Selector<T, U>, equalityFn?: EqualityFn<U>): U;
     getState: GetState<T>;
     setState: SetState<T>;
     subscribe(listener: Listener<T>): () => void;

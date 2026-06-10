@@ -11,6 +11,7 @@ export type {
     GetState,
     StateCreator,
     Selector,
+    EqualityFn,
     Listener,
     Middleware,
     StoreOptions,
@@ -25,3 +26,4 @@ export type { TemporalHistory, TemporalStoreActions } from './history.js'
 
 export { createLogger } from './logger.js';
 export type { LoggerOptions } from './logger.js';
+export { shallow } from './shallow.js';
